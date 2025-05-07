@@ -33,6 +33,8 @@ def create_subtitles(
     max_chars_per_line: int = 42,
     style: Optional[Dict[str, Any]] = None,
     original_transcript: Optional[Dict[str, Any]] = None,
+    play_res_x: int = 1920,  # Default resolution width
+    play_res_y: int = 1080,  # Default resolution height
 ) -> Path:  # Changed return type to Path
     """
     Create an ASS subtitle file from transcript data.
@@ -43,6 +45,8 @@ def create_subtitles(
         max_chars_per_line: Maximum characters per subtitle line
         style: Optional custom style settings
         original_transcript: Optional original transcript for dual-language subtitles
+        play_res_x: Video width resolution for subtitles (default: 1920)
+        play_res_y: Video height resolution for subtitles (default: 1080)
 
     Returns:
         Path to the created subtitle file with sanitized filename
@@ -61,6 +65,10 @@ def create_subtitles(
         # Create a new subtitle file
         subs = pysubs2.SSAFile()
 
+        # Set subtitle resolution
+        subs.info["PlayResX"] = str(play_res_x)
+        subs.info["PlayResY"] = str(play_res_y)
+
         # Create default styles if none provided
         if style is None:
             # Style for English text
@@ -68,7 +76,7 @@ def create_subtitles(
                 "fontname": "Apple Braille",
                 "fontsize": 30,
                 "primarycolor": "&H00FFFFFF",  # White
-                "secondarycolor": "&H000000FF", 
+                "secondarycolor": "&H000000FF",
                 "outlinecolor": "&H00000000",  # Black
                 "backcolor": "&H00000000",
                 "bold": 0,
@@ -88,7 +96,7 @@ def create_subtitles(
                 "marginv": 5,
                 "encoding": 1,
             }
-            
+
             # Style for Chinese text (primary)
             cn_style = {
                 "fontname": "PingFang SC",
@@ -114,7 +122,7 @@ def create_subtitles(
                 "marginv": 10,
                 "encoding": 1,
             }
-            
+
             # Style for Chinese tips
             cn_tip_style = {
                 "fontname": "PingFang SC",
@@ -162,7 +170,7 @@ def create_subtitles(
                 start_time = segment.get("start", 0) * 1000  # Convert to milliseconds
                 end_time = segment.get("end", 0) * 1000
                 text = segment.get("text", "").strip()
-                
+
                 # For dual language subtitles with original_transcript
                 if (
                     original_transcript
@@ -171,24 +179,24 @@ def create_subtitles(
                     and text
                 ):
                     original_text = original_segments[i].get("text", "").strip()
-                    
+
                     # First add the English subtitle (will appear below)
                     subs.events.append(
                         pysubs2.SSAEvent(
                             start=int(start_time),
                             end=int(end_time),
                             text=original_text,
-                            style="EN"
+                            style="EN",
                         )
                     )
-                    
+
                     # Then add the Chinese subtitle (will appear above)
                     subs.events.append(
                         pysubs2.SSAEvent(
                             start=int(start_time),
                             end=int(end_time),
                             text=text,
-                            style="CN"
+                            style="CN",
                         )
                     )
                 # For single language subtitles
@@ -234,26 +242,20 @@ def create_subtitles(
                             start=start_time,
                             end=end_time,
                             text=original_chunks[i],
-                            style="EN"
+                            style="EN",
                         )
                     )
-                    
+
                     # Then add the Chinese subtitle (will appear above)
                     subs.events.append(
                         pysubs2.SSAEvent(
-                            start=start_time,
-                            end=end_time,
-                            text=chunk,
-                            style="CN"
+                            start=start_time, end=end_time, text=chunk, style="CN"
                         )
                     )
                 else:
                     subs.events.append(
                         pysubs2.SSAEvent(
-                            start=start_time,
-                            end=end_time,
-                            text=chunk,
-                            style="Default"
+                            start=start_time, end=end_time, text=chunk, style="Default"
                         )
                     )
 
