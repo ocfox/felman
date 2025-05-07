@@ -1,3 +1,4 @@
+result
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -8,6 +9,3 @@ wheels/
 
 # Virtual environments
 .venv
-
-# nix
-result

@@ -61,13 +61,12 @@ def create_subtitles(
         # Create a new subtitle file
         subs = pysubs2.SSAFile()
 
-        # Create a default style if none provided
+        # Create default styles if none provided
         if style is None:
-            # Using the specified style:
-            # Style: Default,方正黑体_GBK,20,&H00FFFFFF,&HF0000000,&H00000000,&H32000000,0,0,0,0,100,100,0,0,1,2,1,2,5,5,1,134
-            style = {
-                "fontname": "Sans",  # Changed from Chinese font to more universal
-                "fontsize": 15,
+            # Style for target language (primary)
+            default_style = {
+                "fontname": "方正黑体_GBK",
+                "fontsize": 20,
                 "primarycolor": "&H00FFFFFF",  # White
                 "secondarycolor": "&HF0000000",
                 "outlinecolor": "&H00000000",  # Black
@@ -81,17 +80,20 @@ def create_subtitles(
                 "spacing": 0,
                 "angle": 0,
                 "borderstyle": 1,
-                "outline": 1,
-                "shadow": 0,
+                "outline": 2,  # Outline size
+                "shadow": 1,  # Shadow size
                 "alignment": 2,  # Middle center
                 "marginl": 5,
                 "marginr": 5,
                 "marginv": 1,
-                "encoding": 1,  # Changed from Chinese GB2312 encoding to UTF-8
+                "encoding": 134,
             }
 
-        # Add the style to the subtitle file
-        subs.styles["Default"] = pysubs2.SSAStyle(**style)
+            # Add style to the subtitle file
+            subs.styles["Default"] = pysubs2.SSAStyle(**default_style)
+        else:
+            # If custom style is provided, use it
+            subs.styles["Default"] = pysubs2.SSAStyle(**style)
 
         # If we have more information like segments with timestamps, use that
         # Otherwise, create basic subtitles with estimated timing
@@ -107,16 +109,15 @@ def create_subtitles(
                 text = segment.get("text", "").strip()
 
                 if text:
-                    # For dual subtitles, add original language as second line
+                    # For dual subtitles, add original language as second line with style tags
                     if (
                         original_transcript
                         and original_segments
                         and i < len(original_segments)
                     ):
                         original_text = original_segments[i].get("text", "").strip()
-                        final_text = (
-                            text + "\\N" + original_text
-                        )  # Removed font styling that might cause issues
+                        # Use ASS style override tags to specify font for second line
+                        final_text = text + "\\N{\\fn微软雅黑}{\\fs14}" + original_text
                         subs.events.append(
                             pysubs2.SSAEvent(
                                 start=int(start_time),
@@ -161,7 +162,10 @@ def create_subtitles(
 
                 # For dual subtitles, add original language as second line
                 if original_chunks and i < len(original_chunks):
-                    final_text = chunk + "\\N" + original_chunks[i]
+                    # Apply font tags to English text
+                    final_text = (
+                        chunk + "\\N{\\fn微软雅黑}{\\fs14}" + original_chunks[i]
+                    )
                     subs.events.append(
                         pysubs2.SSAEvent(
                             start=start_time,

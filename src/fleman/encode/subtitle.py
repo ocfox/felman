@@ -51,6 +51,10 @@ def embed_subtitles(
     burn_subtitles: bool = True,
     copy_video: bool = True,
     output_format: str = "mkv",
+    show_progress: bool = True,
+    use_hardware_accel: bool = True,
+    hw_device: str = "vaapi",
+    render_method: str = "hw",
 ) -> Path:
     """
     Embed subtitles into a video using ffmpeg.
@@ -69,6 +73,10 @@ def embed_subtitles(
         burn_subtitles: Whether to burn subtitles into the video (True) or just mux them (False)
         copy_video: Whether to copy video stream directly (True) or re-encode (False)
         output_format: Output container format ("mkv" or "mp4", default is "mkv")
+        show_progress: Whether to show FFmpeg progress output in real-time (default: True)
+        use_hardware_accel: Whether to use hardware acceleration (default: True)
+        hw_device: Hardware acceleration device (default: 'vaapi', options: 'vaapi', 'cuda', 'qsv')
+        render_method: Hardware rendering method (default: 'hw', options: 'hw', 'sw')
 
     Returns:
         Path to the output video file with embedded subtitles
@@ -81,7 +89,7 @@ def embed_subtitles(
 
     # Get video info
     try:
-        video_info = VideoInfo(video_path)
+        VideoInfo(video_path)
     except Exception as e:
         raise EncodeError(f"Failed to get video information: {str(e)}")
 
@@ -100,8 +108,55 @@ def embed_subtitles(
         if output_path.suffix.lower() not in [f".{output_format}"]:
             output_path = output_path.with_suffix(f".{output_format}")
 
+    # Important: If burning subtitles with hardware acceleration, we need to use software rendering
+    # for the subtitle filter, then upload to hardware for encoding
+    if burn_subtitles and use_hardware_accel:
+        render_method = (
+            "sw"  # Force software rendering when burning subtitles with hw encoding
+        )
+
+    filter_prefix = ""
+    filter_suffix = ""
+
     # Base ffmpeg command
-    cmd = ["ffmpeg", "-y", "-i", str(video_path)]
+    cmd = ["ffmpeg", "-y"]
+
+    # Add hardware acceleration initialization if enabled
+    if use_hardware_accel:
+        if hw_device == "vaapi":
+            # VAAPI setup (for Intel GPUs)
+            cmd.extend(["-hwaccel", "vaapi"])
+            if render_method == "sw":
+                # Software rendering mode still uses hardware for encoding
+                # Don't set hwaccel_output_format to vaapi to avoid format incompatibility
+                filter_prefix = "format=nv12,"
+                filter_suffix = ",hwupload"
+            else:
+                # Pure hardware rendering mode
+                cmd.extend(["-hwaccel_output_format", "vaapi"])
+                filter_prefix = ""
+                filter_suffix = ""
+        elif hw_device == "cuda":
+            # NVIDIA CUDA setup
+            cmd.extend(["-hwaccel", "cuda"])
+            if render_method == "sw":
+                # Software rendering for CUDA
+                filter_prefix = "format=nv12,"
+                filter_suffix = ",hwupload_cuda"
+            else:
+                cmd.extend(["-hwaccel_output_format", "cuda"])
+        elif hw_device == "qsv":
+            # Intel Quick Sync Video setup
+            cmd.extend(["-hwaccel", "qsv"])
+            if render_method == "sw":
+                # Software rendering for QSV
+                filter_prefix = "format=nv12,"
+                filter_suffix = ",hwupload=extra_hw_frames=64"
+            else:
+                cmd.extend(["-hwaccel_output_format", "qsv"])
+
+    # Input file
+    cmd.extend(["-i", str(video_path)])
 
     # Handle subtitle embedding
     if burn_subtitles:
@@ -161,60 +216,51 @@ def embed_subtitles(
             )
             subtitle_filter = f"subtitles={escaped_subtitle_path}{force_style}"
 
-        if copy_video:
-            # Copy video codec but apply subtitle filter
-            cmd.extend(
-                [
-                    "-map",
-                    "0:v",
-                    "-map",
-                    "0:a?",
-                    "-c:a",
-                    "copy",
-                    "-vf",
-                    subtitle_filter,
-                ]
-            )
+        # Prepare the complete filter string with hardware acceleration considerations
+        complete_filter = f"{filter_prefix}{subtitle_filter}{filter_suffix}"
 
-            # Choose video codec based on output format
-            if output_format == "webm":
-                # WebM requires VP8, VP9 or AV1
-                cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0"])
-                # WebM requires Vorbis or Opus audio
-                cmd.extend(["-c:a", "libopus", "-b:a", "128k"])
-            elif output_format == "mp4":
-                # For MP4, use h264
-                cmd.extend(["-c:v", "libx264", "-crf", "18", "-preset", "fast"])
-            else:  # mkv - most flexible container
-                # If it's h264 or h265, use libx264/libx265 for compatibility
-                if video_info.video_codec in ["h264", "avc1"]:
-                    cmd.extend(["-c:v", "libx264", "-crf", "18", "-preset", "fast"])
-                elif video_info.video_codec in ["hevc", "hvc1", "h265"]:
-                    cmd.extend(["-c:v", "libx265", "-crf", "22", "-preset", "fast"])
-                else:
-                    # For other formats, use H.264 for better compatibility
-                    cmd.extend(["-c:v", "libx264", "-crf", "18"])
+        # Map streams and configure codecs
+        cmd.extend(
+            [
+                "-map",
+                "0:v",
+                "-map",
+                "0:a?",
+                "-c:a",
+                "copy",
+                "-vf",
+                complete_filter,
+            ]
+        )
+
+        # Configure video encoding based on hardware acceleration
+        if use_hardware_accel:
+            if hw_device == "vaapi":
+                if output_format == "mp4" or output_format == "mkv":
+                    cmd.extend(["-c:v", "h264_vaapi", "-qp", "18"])
+                elif output_format == "webm":
+                    cmd.extend(["-c:v", "vp9_vaapi", "-b:v", "2M"])
+            elif hw_device == "cuda":
+                if output_format == "mp4" or output_format == "mkv":
+                    cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-qp", "18"])
+                elif output_format == "webm":
+                    # Fall back to software for webm since NVENC doesn't support VP9
+                    cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0"])
+            elif hw_device == "qsv":
+                if output_format == "mp4" or output_format == "mkv":
+                    cmd.extend(["-c:v", "h264_qsv", "-q", "18"])
+                elif output_format == "webm":
+                    # Fall back to software for webm
+                    cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0"])
         else:
-            # Re-encode with subtitle filter
-            cmd.extend(
-                [
-                    "-vf",
-                    subtitle_filter,
-                    "-map",
-                    "0:a?",
-                ]
-            )
-
-            # Set appropriate codecs for re-encoding based on container
+            # Software encoding
             if output_format == "webm":
                 cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0"])
                 cmd.extend(["-c:a", "libopus", "-b:a", "128k"])
             elif output_format == "mp4":
                 cmd.extend(["-c:v", "libx264", "-crf", "18", "-preset", "fast"])
-                cmd.extend(["-c:a", "aac", "-b:a", "192k"])
             else:  # mkv
                 cmd.extend(["-c:v", "libx264", "-crf", "18", "-preset", "fast"])
-                cmd.extend(["-c:a", "copy"])
     else:
         # Just mux subtitles (add them as a stream, not burned in)
         cmd.extend(
@@ -252,12 +298,22 @@ def embed_subtitles(
         for k, v in encoding_options.items():
             cmd.extend([f"-{k}", str(v)])
 
+    # Add progress display option for ffmpeg
+    if show_progress:
+        cmd.extend(["-stats"])
+
     # Add output file
     cmd.append(str(output_path))
 
     try:
-        # Run ffmpeg
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        # Run ffmpeg with or without displaying output
+        if show_progress:
+            # Display progress to stdout/stderr in real-time
+            subprocess.run(cmd, check=True)
+        else:
+            # Capture output (silent mode)
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+
         return output_path
     except subprocess.SubprocessError as e:
         stderr = e.stderr if hasattr(e, "stderr") and isinstance(e.stderr, str) else ""

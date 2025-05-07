@@ -87,6 +87,26 @@ def process(
         "-f",
         help="Output video format (mkv or mp4). Default is mkv.",
     ),
+    show_progress: bool = typer.Option(
+        True,
+        "--show-progress/--hide-progress",
+        help="Show FFmpeg progress output when encoding video",
+    ),
+    use_hardware_accel: bool = typer.Option(
+        True,
+        "--hw-accel/--sw-encode",
+        help="Use hardware acceleration for video encoding when available (default: enabled)",
+    ),
+    hw_device: str = typer.Option(
+        "vaapi",
+        "--hw-device",
+        help="Hardware acceleration device type (vaapi, cuda, qsv)",
+    ),
+    render_method: str = typer.Option(
+        "sw",
+        "--render-method",
+        help="Hardware rendering method (hw, sw) - sw is more compatible with subtitle filters",
+    ),
 ):
     """
     Process audio/video file: transcribe, translate, and generate subtitle file.
@@ -225,6 +245,10 @@ def process(
                 output_path=encoded_output,
                 burn_subtitles=burn_subtitles,
                 output_format=output_format,
+                show_progress=show_progress,
+                use_hardware_accel=use_hardware_accel,
+                hw_device=hw_device,
+                render_method=render_method,
             )
             console.print("[green]Video with subtitles created successfully![/green]")
         except EncodeError as e:
