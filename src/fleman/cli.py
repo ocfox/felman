@@ -154,15 +154,11 @@ def process(
         file_stem = media_file.stem
         suffix = ".ass"
 
-        # Determine language suffix for the file name
         if no_translate:
-            # Just use "en" if no translation
             lang_suffix = "-en"
         else:
-            # For translation use target language, or lang/en for dual
             if dual_subtitles and target_language.lower() != "en":
-                lang_suffix = f"-{target_language.lower()}&en"
-            else:
+                lang_suffix = f"-{target_language.lower()}-en"
                 lang_suffix = f"-{target_language.lower()}"
 
         output_file = media_file.with_name(f"{file_stem}{lang_suffix}{suffix}")
