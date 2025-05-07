@@ -1,0 +1,276 @@
+import pysubs2
+from pathlib import Path
+import re
+from typing import Dict, Any, Optional, List
+
+
+class SubtitleError(Exception):
+    """Exception raised for errors during subtitle generation."""
+
+    pass
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename to avoid issues with ffmpeg subtitle filter.
+
+    Args:
+        filename: Original filename
+
+    Returns:
+        Sanitized filename without spaces and problematic characters
+    """
+    # Replace spaces with underscores
+    sanitized = re.sub(r"\s+", "_", filename)
+    # Remove special characters that might cause issues with ffmpeg
+    sanitized = re.sub(r"[&?*:;|<>]", "", sanitized)
+    return sanitized
+
+
+def create_subtitles(
+    transcript: Dict[str, Any],
+    output_file: Path,
+    max_chars_per_line: int = 42,
+    style: Optional[Dict[str, Any]] = None,
+    original_transcript: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Create an ASS subtitle file from transcript data.
+
+    Args:
+        transcript: Dictionary containing transcript data with 'text' key
+        output_file: Path where the subtitle file will be saved
+        max_chars_per_line: Maximum characters per subtitle line
+        style: Optional custom style settings
+        original_transcript: Optional original transcript for dual-language subtitles
+
+    Returns:
+        None
+    """
+    try:
+        # Sanitize the output filename to avoid issues with ffmpeg subtitle filter
+        parent_dir = output_file.parent
+        output_name = sanitize_filename(output_file.name)
+        output_file = parent_dir / output_name
+
+        # Extract text from transcript
+        text = transcript.get("text", "")
+        if not text:
+            raise SubtitleError("No text found in transcript for subtitle creation")
+
+        # Create a new subtitle file
+        subs = pysubs2.SSAFile()
+
+        # Create a default style if none provided
+        if style is None:
+            # Using the specified style:
+            # Style: Default,方正黑体_GBK,20,&H00FFFFFF,&HF0000000,&H00000000,&H32000000,0,0,0,0,100,100,0,0,1,2,1,2,5,5,1,134
+            style = {
+                "fontname": "Sans",  # Changed from Chinese font to more universal
+                "fontsize": 15,
+                "primarycolor": "&H00FFFFFF",  # White
+                "secondarycolor": "&HF0000000",
+                "outlinecolor": "&H00000000",  # Black
+                "backcolor": "&H32000000",
+                "bold": 0,
+                "italic": 0,
+                "underline": 0,
+                "strikeout": 0,
+                "scalex": 100,
+                "scaley": 100,
+                "spacing": 0,
+                "angle": 0,
+                "borderstyle": 1,
+                "outline": 1,
+                "shadow": 0,
+                "alignment": 2,  # Middle center
+                "marginl": 5,
+                "marginr": 5,
+                "marginv": 1,
+                "encoding": 1,  # Changed from Chinese GB2312 encoding to UTF-8
+            }
+
+        # Add the style to the subtitle file
+        subs.styles["Default"] = pysubs2.SSAStyle(**style)
+
+        # If we have more information like segments with timestamps, use that
+        # Otherwise, create basic subtitles with estimated timing
+        if transcript.get("segments") and len(transcript["segments"]) > 0:
+            # Get original segments if we're doing dual subtitles
+            original_segments = None
+            if original_transcript and original_transcript.get("segments"):
+                original_segments = original_transcript.get("segments", [])
+
+            for i, segment in enumerate(transcript["segments"]):
+                start_time = segment.get("start", 0) * 1000  # Convert to milliseconds
+                end_time = segment.get("end", 0) * 1000
+                text = segment.get("text", "").strip()
+
+                if text:
+                    # For dual subtitles, add original language as second line
+                    if (
+                        original_transcript
+                        and original_segments
+                        and i < len(original_segments)
+                    ):
+                        original_text = original_segments[i].get("text", "").strip()
+                        final_text = (
+                            text + "\\N" + original_text
+                        )  # Removed font styling that might cause issues
+                        subs.events.append(
+                            pysubs2.SSAEvent(
+                                start=int(start_time),
+                                end=int(end_time),
+                                text=final_text,
+                                style="Default",
+                            )
+                        )
+                    else:
+                        subs.events.append(
+                            pysubs2.SSAEvent(
+                                start=int(start_time),
+                                end=int(end_time),
+                                text=text,
+                                style="Default",
+                            )
+                        )
+        else:
+            # Split text into sentences or chunks for better readability
+            sentences = split_into_sentences(text)
+            chunks = create_subtitle_chunks(sentences, max_chars_per_line)
+
+            # For dual subtitles without segments, we need to handle original text differently
+            original_chunks = None
+            if original_transcript:
+                original_sentences = split_into_sentences(
+                    original_transcript.get("text", "")
+                )
+                original_chunks = create_subtitle_chunks(
+                    original_sentences, max_chars_per_line
+                )
+
+            # Create basic subtitles with estimated timing
+            # Each subtitle will be displayed for about 3 seconds
+            display_time = 3000  # milliseconds
+            start_time = 0
+
+            for i, chunk in enumerate(chunks):
+                # Estimate duration based on character count (about 15 chars per second)
+                duration = max(display_time, len(chunk) * 1000 // 15)
+                end_time = start_time + duration
+
+                # For dual subtitles, add original language as second line
+                if original_chunks and i < len(original_chunks):
+                    final_text = chunk + "\\N" + original_chunks[i]
+                    subs.events.append(
+                        pysubs2.SSAEvent(
+                            start=start_time,
+                            end=end_time,
+                            text=final_text,
+                            style="Default",
+                        )
+                    )
+                else:
+                    subs.events.append(
+                        pysubs2.SSAEvent(
+                            start=start_time, end=end_time, text=chunk, style="Default"
+                        )
+                    )
+
+                start_time = end_time + 100  # Small gap between subtitles
+
+        # Save the subtitle file
+        subs.save(output_file)
+
+    except Exception as e:
+        raise SubtitleError(f"Failed to create subtitle file: {str(e)}")
+
+
+def split_into_sentences(text: str) -> List[str]:
+    """
+    Split text into sentences.
+
+    Args:
+        text: Text to split
+
+    Returns:
+        List of sentences
+    """
+    # Simple sentence splitting by punctuation
+    # In a real implementation, you would use NLP libraries for better sentence segmentation
+    import re
+
+    # Split on sentence endings and keep the punctuation with the sentence
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    return [s.strip() for s in sentences if s.strip()]
+
+
+def create_subtitle_chunks(sentences: List[str], max_chars_per_line: int) -> List[str]:
+    """
+    Create subtitle chunks from sentences, respecting maximum characters per line.
+
+    Args:
+        sentences: List of sentences to chunk
+        max_chars_per_line: Maximum characters per line
+
+    Returns:
+        List of subtitle chunks
+    """
+    chunks = []
+    current_chunk = ""
+
+    for sentence in sentences:
+        # If the sentence is very long, split it further
+        if len(sentence) > max_chars_per_line * 2:
+            words = sentence.split()
+            current_line = ""
+
+            for word in words:
+                if len(current_line) + len(word) + 1 <= max_chars_per_line:
+                    current_line += " " + word if current_line else word
+                else:
+                    if current_chunk:
+                        if (
+                            len(current_chunk + "\\N" + current_line)
+                            <= max_chars_per_line * 2
+                        ):
+                            current_chunk += "\\N" + current_line
+                        else:
+                            chunks.append(current_chunk)
+                            current_chunk = current_line
+                    else:
+                        current_chunk = current_line
+
+                    current_line = word
+
+            # Add the last line
+            if current_line:
+                if current_chunk:
+                    if (
+                        len(current_chunk + "\\N" + current_line)
+                        <= max_chars_per_line * 2
+                    ):
+                        current_chunk += "\\N" + current_line
+                    else:
+                        chunks.append(current_chunk)
+                        current_chunk = current_line
+                else:
+                    current_chunk = current_line
+        else:
+            # For shorter sentences, try to group them together
+            if current_chunk:
+                if (
+                    len(current_chunk) + len(sentence) + 4 <= max_chars_per_line * 2
+                ):  # 4 for " | " separator
+                    current_chunk += " | " + sentence
+                else:
+                    chunks.append(current_chunk)
+                    current_chunk = sentence
+            else:
+                current_chunk = sentence
+
+    # Add the last chunk if there is one
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
