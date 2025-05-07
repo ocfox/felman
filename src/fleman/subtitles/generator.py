@@ -33,7 +33,7 @@ def create_subtitles(
     max_chars_per_line: int = 42,
     style: Optional[Dict[str, Any]] = None,
     original_transcript: Optional[Dict[str, Any]] = None,
-) -> None:
+) -> Path:  # Changed return type to Path
     """
     Create an ASS subtitle file from transcript data.
 
@@ -45,13 +45,13 @@ def create_subtitles(
         original_transcript: Optional original transcript for dual-language subtitles
 
     Returns:
-        None
+        Path to the created subtitle file with sanitized filename
     """
     try:
         # Sanitize the output filename to avoid issues with ffmpeg subtitle filter
         parent_dir = output_file.parent
         output_name = sanitize_filename(output_file.name)
-        output_file = parent_dir / output_name
+        sanitized_output_file = parent_dir / output_name
 
         # Extract text from transcript
         text = transcript.get("text", "")
@@ -63,14 +63,14 @@ def create_subtitles(
 
         # Create default styles if none provided
         if style is None:
-            # Style for target language (primary)
-            default_style = {
-                "fontname": "方正黑体_GBK",
-                "fontsize": 20,
+            # Style for English text
+            en_style = {
+                "fontname": "Apple Braille",
+                "fontsize": 30,
                 "primarycolor": "&H00FFFFFF",  # White
-                "secondarycolor": "&HF0000000",
+                "secondarycolor": "&H000000FF", 
                 "outlinecolor": "&H00000000",  # Black
-                "backcolor": "&H32000000",
+                "backcolor": "&H00000000",
                 "bold": 0,
                 "italic": 0,
                 "underline": 0,
@@ -80,17 +80,72 @@ def create_subtitles(
                 "spacing": 0,
                 "angle": 0,
                 "borderstyle": 1,
-                "outline": 2,  # Outline size
-                "shadow": 1,  # Shadow size
+                "outline": 1,
+                "shadow": 1,
                 "alignment": 2,  # Middle center
-                "marginl": 5,
-                "marginr": 5,
-                "marginv": 1,
-                "encoding": 134,
+                "marginl": 10,
+                "marginr": 10,
+                "marginv": 5,
+                "encoding": 1,
+            }
+            
+            # Style for Chinese text (primary)
+            cn_style = {
+                "fontname": "PingFang SC",
+                "fontsize": 48,
+                "primarycolor": "&H00FFFFFF",  # White
+                "secondarycolor": "&H000000FF",
+                "outlinecolor": "&H00000000",  # Black
+                "backcolor": "&H00000000",
+                "bold": -1,
+                "italic": 0,
+                "underline": 0,
+                "strikeout": 0,
+                "scalex": 100,
+                "scaley": 100,
+                "spacing": 0,
+                "angle": 0,
+                "borderstyle": 1,
+                "outline": 1,
+                "shadow": 1,
+                "alignment": 2,  # Middle center
+                "marginl": 10,
+                "marginr": 10,
+                "marginv": 10,
+                "encoding": 1,
+            }
+            
+            # Style for Chinese tips
+            cn_tip_style = {
+                "fontname": "PingFang SC",
+                "fontsize": 48,
+                "primarycolor": "&H00FFFFFF",  # White
+                "secondarycolor": "&H000000FF",
+                "outlinecolor": "&H00000000",  # Black
+                "backcolor": "&H00000000",
+                "bold": -1,
+                "italic": 0,
+                "underline": 0,
+                "strikeout": 0,
+                "scalex": 100,
+                "scaley": 100,
+                "spacing": 0,
+                "angle": 0,
+                "borderstyle": 1,
+                "outline": 1.5,
+                "shadow": 1,
+                "alignment": 7,  # Bottom left
+                "marginl": 10,
+                "marginr": 10,
+                "marginv": 10,
+                "encoding": 1,
             }
 
-            # Add style to the subtitle file
-            subs.styles["Default"] = pysubs2.SSAStyle(**default_style)
+            # Add styles to the subtitle file
+            subs.styles["EN"] = pysubs2.SSAStyle(**en_style)
+            subs.styles["CN"] = pysubs2.SSAStyle(**cn_style)
+            subs.styles["CN - tip"] = pysubs2.SSAStyle(**cn_tip_style)
+            subs.styles["Default"] = pysubs2.SSAStyle(**cn_style)  # Default style as CN
         else:
             # If custom style is provided, use it
             subs.styles["Default"] = pysubs2.SSAStyle(**style)
@@ -107,34 +162,45 @@ def create_subtitles(
                 start_time = segment.get("start", 0) * 1000  # Convert to milliseconds
                 end_time = segment.get("end", 0) * 1000
                 text = segment.get("text", "").strip()
-
-                if text:
-                    # For dual subtitles, add original language as second line with style tags
-                    if (
-                        original_transcript
-                        and original_segments
-                        and i < len(original_segments)
-                    ):
-                        original_text = original_segments[i].get("text", "").strip()
-                        # Use ASS style override tags to specify font for second line
-                        final_text = text + "\\N{\\fn微软雅黑}{\\fs14}" + original_text
-                        subs.events.append(
-                            pysubs2.SSAEvent(
-                                start=int(start_time),
-                                end=int(end_time),
-                                text=final_text,
-                                style="Default",
-                            )
+                
+                # For dual language subtitles with original_transcript
+                if (
+                    original_transcript
+                    and original_segments
+                    and i < len(original_segments)
+                    and text
+                ):
+                    original_text = original_segments[i].get("text", "").strip()
+                    
+                    # First add the English subtitle (will appear below)
+                    subs.events.append(
+                        pysubs2.SSAEvent(
+                            start=int(start_time),
+                            end=int(end_time),
+                            text=original_text,
+                            style="EN"
                         )
-                    else:
-                        subs.events.append(
-                            pysubs2.SSAEvent(
-                                start=int(start_time),
-                                end=int(end_time),
-                                text=text,
-                                style="Default",
-                            )
+                    )
+                    
+                    # Then add the Chinese subtitle (will appear above)
+                    subs.events.append(
+                        pysubs2.SSAEvent(
+                            start=int(start_time),
+                            end=int(end_time),
+                            text=text,
+                            style="CN"
                         )
+                    )
+                # For single language subtitles
+                elif text:
+                    subs.events.append(
+                        pysubs2.SSAEvent(
+                            start=int(start_time),
+                            end=int(end_time),
+                            text=text,
+                            style="Default",
+                        )
+                    )
         else:
             # Split text into sentences or chunks for better readability
             sentences = split_into_sentences(text)
@@ -160,31 +226,42 @@ def create_subtitles(
                 duration = max(display_time, len(chunk) * 1000 // 15)
                 end_time = start_time + duration
 
-                # For dual subtitles, add original language as second line
+                # For dual subtitles
                 if original_chunks and i < len(original_chunks):
-                    # Apply font tags to English text
-                    final_text = (
-                        chunk + "\\N{\\fn微软雅黑}{\\fs14}" + original_chunks[i]
-                    )
+                    # First add the English subtitle (will appear below)
                     subs.events.append(
                         pysubs2.SSAEvent(
                             start=start_time,
                             end=end_time,
-                            text=final_text,
-                            style="Default",
+                            text=original_chunks[i],
+                            style="EN"
+                        )
+                    )
+                    
+                    # Then add the Chinese subtitle (will appear above)
+                    subs.events.append(
+                        pysubs2.SSAEvent(
+                            start=start_time,
+                            end=end_time,
+                            text=chunk,
+                            style="CN"
                         )
                     )
                 else:
                     subs.events.append(
                         pysubs2.SSAEvent(
-                            start=start_time, end=end_time, text=chunk, style="Default"
+                            start=start_time,
+                            end=end_time,
+                            text=chunk,
+                            style="Default"
                         )
                     )
 
                 start_time = end_time + 100  # Small gap between subtitles
 
         # Save the subtitle file
-        subs.save(output_file)
+        subs.save(sanitized_output_file)
+        return sanitized_output_file
 
     except Exception as e:
         raise SubtitleError(f"Failed to create subtitle file: {str(e)}")

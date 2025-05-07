@@ -107,6 +107,11 @@ def process(
         "--render-method",
         help="Hardware rendering method (hw, sw) - sw is more compatible with subtitle filters",
     ),
+    codec: str = typer.Option(
+        "av1",
+        "--codec",
+        help="Video codec to use for encoding (h264, vp9, av1). Default is av1.",
+    ),
 ):
     """
     Process audio/video file: transcribe, translate, and generate subtitle file.
@@ -159,6 +164,7 @@ def process(
         else:
             if dual_subtitles and target_language.lower() != "en":
                 lang_suffix = f"-{target_language.lower()}-en"
+            else:
                 lang_suffix = f"-{target_language.lower()}"
 
         output_file = media_file.with_name(f"{file_stem}{lang_suffix}{suffix}")
@@ -206,7 +212,8 @@ def process(
     # Step 3: Generate subtitle file
     console.print(f"[yellow]Generating subtitle file at {output_file}...[/yellow]")
     try:
-        create_subtitles(
+        # create_subtitles now returns the Path with sanitized filename
+        subtitle_file = create_subtitles(
             transcript,
             output_file,
             original_transcript=original_transcript if dual_subtitles else None,
@@ -224,8 +231,10 @@ def process(
         # Determine output path for encoded video
         if encoded_output is None:
             suffix = "-subtitled" if burn_subtitles else "-sub-muxed"
+            # Sanitize the encoded output filename too
+            media_stem = media_file.stem.replace(" ", "_")
             encoded_output = media_file.with_name(
-                f"{media_file.stem}{suffix}.{output_format}"
+                f"{media_stem}{suffix}.{output_format}"
             )
         else:
             # Ensure encoded_output has the correct extension
@@ -237,7 +246,7 @@ def process(
         try:
             embed_subtitles(
                 video_path=media_file,
-                subtitle_path=output_file,
+                subtitle_path=subtitle_file,  # Use the sanitized subtitle file path
                 output_path=encoded_output,
                 burn_subtitles=burn_subtitles,
                 output_format=output_format,
@@ -245,6 +254,7 @@ def process(
                 use_hardware_accel=use_hardware_accel,
                 hw_device=hw_device,
                 render_method=render_method,
+                codec=codec,
             )
             console.print("[green]Video with subtitles created successfully![/green]")
         except EncodeError as e:
@@ -258,7 +268,7 @@ def process(
             pass  # Ignore errors when cleaning up
 
     console.print(
-        f"[green]✓[/green] All processing complete! Subtitle file saved to {output_file}"
+        f"[green]✓[/green] All processing complete! Subtitle file saved to {subtitle_file}"
     )
 
 

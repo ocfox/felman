@@ -55,6 +55,7 @@ def embed_subtitles(
     use_hardware_accel: bool = True,
     hw_device: str = "vaapi",
     render_method: str = "hw",
+    codec: str = "av1",
 ) -> Path:
     """
     Embed subtitles into a video using ffmpeg.
@@ -77,6 +78,7 @@ def embed_subtitles(
         use_hardware_accel: Whether to use hardware acceleration (default: True)
         hw_device: Hardware acceleration device (default: 'vaapi', options: 'vaapi', 'cuda', 'qsv')
         render_method: Hardware rendering method (default: 'hw', options: 'hw', 'sw')
+        codec: Video codec to use (default: 'av1', options: 'h264', 'av1', 'vp9')
 
     Returns:
         Path to the output video file with embedded subtitles
@@ -236,31 +238,39 @@ def embed_subtitles(
         # Configure video encoding based on hardware acceleration
         if use_hardware_accel:
             if hw_device == "vaapi":
-                if output_format == "mp4" or output_format == "mkv":
+                if codec == "h264":
                     cmd.extend(["-c:v", "h264_vaapi", "-qp", "18"])
-                elif output_format == "webm":
+                elif codec == "vp9":
                     cmd.extend(["-c:v", "vp9_vaapi", "-b:v", "2M"])
+                elif codec == "av1":
+                    cmd.extend(["-c:v", "av1_vaapi", "-b:v", "2M"])
             elif hw_device == "cuda":
-                if output_format == "mp4" or output_format == "mkv":
+                if codec == "h264":
                     cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-qp", "18"])
-                elif output_format == "webm":
-                    # Fall back to software for webm since NVENC doesn't support VP9
+                elif codec == "vp9":
+                    # Fall back to software for vp9 since NVENC doesn't support VP9
                     cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0"])
+                elif codec == "av1":
+                    # Fall back to software for av1
+                    cmd.extend(["-c:v", "libaom-av1", "-crf", "30", "-b:v", "0"])
             elif hw_device == "qsv":
-                if output_format == "mp4" or output_format == "mkv":
+                if codec == "h264":
                     cmd.extend(["-c:v", "h264_qsv", "-q", "18"])
-                elif output_format == "webm":
-                    # Fall back to software for webm
+                elif codec == "vp9":
+                    # Fall back to software for vp9
                     cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0"])
+                elif codec == "av1":
+                    # Fall back to software for av1
+                    cmd.extend(["-c:v", "libaom-av1", "-crf", "30", "-b:v", "0"])
         else:
             # Software encoding
-            if output_format == "webm":
+            if codec == "vp9":
                 cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0"])
                 cmd.extend(["-c:a", "libopus", "-b:a", "128k"])
-            elif output_format == "mp4":
+            elif codec == "h264":
                 cmd.extend(["-c:v", "libx264", "-crf", "18", "-preset", "fast"])
-            else:  # mkv
-                cmd.extend(["-c:v", "libx264", "-crf", "18", "-preset", "fast"])
+            elif codec == "av1":
+                cmd.extend(["-c:v", "libaom-av1", "-crf", "30", "-b:v", "0"])
     else:
         # Just mux subtitles (add them as a stream, not burned in)
         cmd.extend(
