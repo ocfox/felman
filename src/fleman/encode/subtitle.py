@@ -241,9 +241,9 @@ def embed_subtitles(
                 if codec == "h264":
                     cmd.extend(["-c:v", "h264_vaapi", "-qp", "18"])
                 elif codec == "vp9":
-                    cmd.extend(["-c:v", "vp9_vaapi", "-b:v", "2M"])
+                    cmd.extend(["-c:v", "vp9_vaapi", "-qp", "20"])
                 elif codec == "av1":
-                    cmd.extend(["-c:v", "av1_vaapi", "-b:v", "2M"])
+                    cmd.extend(["-c:v", "av1_vaapi", "-qp", "20"])
             elif hw_device == "cuda":
                 if codec == "h264":
                     cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-qp", "18"])
